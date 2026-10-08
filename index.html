@@ -346,11 +346,11 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       <div class="card"><div class="label" id="kpiLabel">STATUS MÉDIO DA ANÁLISE</div><div class="value" id="kpiAvanco">0%</div><div class="hint">conforme filtros aplicados</div></div>
       <div class="card"><div class="label">PENDÊNCIA</div><div class="value" id="kpiPend">0%</div><div class="hint">percentual pendente</div></div>
       <div class="card"><div class="label">SEGMENTOS ANALISADOS</div><div class="value" id="kpiSeg">0</div><div class="hint" id="kpiSegHint">com checklist iniciado</div></div>
-      <div class="card"><div class="label">ITENS REPROVADOS</div><div class="value" id="kpiRep" style="color:var(--red)">0</div><div class="hint">na revisão vigente</div></div>
+      <div class="card"><div class="label">ITENS REPROVADOS</div><div class="value" id="kpiRep" style="color:var(--red)">0</div><div class="hint">na análise vigente</div></div>
     </div>
     <div class="grid">
       <div class="panel">
-        <div class="panel-head"><div><div class="panel-title">Avanço por segmento</div><div class="panel-sub">Revisão vigente de cada segmento • cor = construtora</div></div></div>
+        <div class="panel-head"><div><div class="panel-title">Avanço por segmento</div><div class="panel-sub">Análise vigente (mais recente) de cada segmento • cor = construtora</div></div></div>
         <div class="chart-wrap"><canvas id="segmentChart"></canvas></div>
         <div class="chart-legend" id="segmentLegend"></div>
       </div>
@@ -1094,7 +1094,7 @@ async function firebaseStore() {
       const ref = F.doc(F.collection(db, "analises"));
       const b = F.writeBatch(db);
       b.set(ref, { ...data, criadoPor: user()?.nome, criadoEm: now(), atualizadoPor: user()?.nome, atualizadoEm: now() });
-      log(b, ref.id, { tipo: "criacao", texto: `Análise criada (segmento ${data.segmento}, rev. ${data.revisao})` });
+      log(b, ref.id, { tipo: "criacao", texto: `Análise Nº ${data.numero} criada (segmento ${data.segmento}, revisão do documento: ${data.revisao || "—"})` });
       // não espera o servidor: funciona também offline (sincroniza ao reconectar)
       b.commit().catch(e => alert("Erro ao criar análise: " + e.message));
       return ref.id;
@@ -1216,7 +1216,7 @@ function localStore() {
     async createAnalise(data) {
       const id = uid();
       db.analises[id] = { ...clone(data), criadoPor: user()?.nome, criadoEm: now(), atualizadoPor: user()?.nome, atualizadoEm: now() };
-      log(id, { tipo: "criacao", texto: `Análise criada (segmento ${data.segmento}, rev. ${data.revisao})` });
+      log(id, { tipo: "criacao", texto: `Análise Nº ${data.numero} criada (segmento ${data.segmento}, revisão do documento: ${data.revisao || "—"})` });
       save(); return id;
     },
     async updateHeader(id, patch, texto) { Object.assign(db.analises[id], patch, { atualizadoPor: user()?.nome, atualizadoEm: now() }); log(id, { tipo: "cabecalho", texto }); save(); },
@@ -1325,8 +1325,12 @@ function novosItens() {
 const S = { user: null, segmentos: [], construtoras: normConst(), analises: [], unsub: [], ck: null, focusKey: null, ckFiltro: "todos", pend: 0, charts: {} };
 
 function porSegmento(cod) {
-  return S.analises.filter(a => a.segmento === cod).sort((x, y) => (x.criadoEm || "").localeCompare(y.criadoEm || ""));
+  const l = S.analises.filter(a => a.segmento === cod).sort((x, y) => (x.criadoEm || "").localeCompare(y.criadoEm || ""));
+  l.forEach((a, i) => { if (a.numero == null) a.numero = i + 1; }); // análises antigas sem número
+  return l.sort((x, y) => (x.numero - y.numero) || (x.criadoEm || "").localeCompare(y.criadoEm || ""));
 }
+const numDe = a => a ? (a.numero ?? porSegmento(a.segmento).find(x => x.id === a.id)?.numero ?? 1) : "—";
+const revTxt = a => a?.revisao ? "Rev. " + esc(a.revisao) : "Rev. —";
 function vigente(cod) { const l = porSegmento(cod); return l[l.length - 1] || null; }
 function pacotesTodos() { return uniq(S.segmentos.flatMap(s => s.pacotes)); }
 
@@ -1552,7 +1556,7 @@ function renderDashboard() {
 
   // Matriz
   $("matrixCount").textContent = `${secs.length} disciplinas × ${segs.length} segmentos`;
-  let h = "<thead><tr><th>#</th><th>Disciplina</th>" + segs.map(s => `<th class="num"><a href="#" data-seg="${esc(s.codigo)}">${esc(s.codigo)}</a><br>${empChip(constSeg(s))}<br>${s.pacotes.map(pacChip).join("")}<br><small style="font-weight:500;text-transform:none">${s.a ? "Rev. " + esc(s.a.revisao || "—") : "sem análise"}</small></th>`).join("") + '<th class="num">Média</th></tr></thead><tbody>';
+  let h = "<thead><tr><th>#</th><th>Disciplina</th>" + segs.map(s => `<th class="num"><a href="#" data-seg="${esc(s.codigo)}">${esc(s.codigo)}</a><br>${empChip(constSeg(s))}<br>${s.pacotes.map(pacChip).join("")}<br><small style="font-weight:500;text-transform:none">${s.a ? `Análise Nº ${numDe(s.a)} · ${revTxt(s.a)}` : "sem análise"}</small></th>`).join("") + '<th class="num">Média</th></tr></thead><tbody>';
   const row = (id, nome, ks, bold) => {
     const vals = segs.map(s => s.a ? calc(s.a, ks)[ind] : null);
     const m = avg(vals.map(v => v || 0));
@@ -1567,12 +1571,12 @@ function renderDashboard() {
 }
 $("exportDashBtn").onclick = () => {
   const { segs, ind, secs } = dashData();
-  const rows = [["ID", "DISCIPLINA", ...segs.map(s => s.codigo)], ["", "PACOTE", ...segs.map(s => s.pacotes.join(" / "))], ["", "CONSTRUTORA", ...segs.map(constSeg)], ["", "REVISÃO", ...segs.map(s => s.a?.revisao || "—")]];
+  const rows = [["ID", "DISCIPLINA", ...segs.map(s => s.codigo)], ["", "PACOTE", ...segs.map(s => s.pacotes.join(" / "))], ["", "CONSTRUTORA", ...segs.map(constSeg)], ["", "ANÁLISE Nº", ...segs.map(s => s.a ? numDe(s.a) : "—")], ["", "REVISÃO DO DOC.", ...segs.map(s => s.a?.revisao || "—")]];
   secs.forEach(sec => rows.push([+sec.id, sec.titulo, ...segs.map(s => s.a ? +calc(s.a, SEC_KEYS[sec.id])[ind].toFixed(4) : 0)]));
   rows.push(["", "Status", ...segs.map(s => s.a ? +calc(s.a)[ind].toFixed(4) : 0)]);
   rows.push(["", "Pendente", ...segs.map(s => s.a ? +(1 - calc(s.a)[ind]).toFixed(4) : 1)]);
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  for (let r = 4; r < rows.length; r++) for (let c = 2; c < rows[0].length; c++) { const ref = XLSX.utils.encode_cell({ r, c }); if (ws[ref]) ws[ref].z = "0.0%"; }
+  for (let r = 5; r < rows.length; r++) for (let c = 2; c < rows[0].length; c++) { const ref = XLSX.utils.encode_cell({ r, c }); if (ws[ref]) ws[ref].z = "0.0%"; }
   ws["!cols"] = [{ wch: 5 }, { wch: 30 }, ...segs.map(() => ({ wch: 10 }))];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "PAINEL");
   XLSX.writeFile(wb, `PAINEL AS BUILT - GEOMETRIA - ${today()}.xlsx`);
@@ -1599,7 +1603,7 @@ function renderSegmentos() {
       const pill = !a ? '<span class="status-pill st-none">Sem análise</span>' : `<span class="status-pill ${stClass(c.anal)}">${statusDoc(a)}</span>`;
       html += `<div class="seg-card" data-seg="${esc(s.codigo)}" style="border-top-color:${corPac(p)}">
         <div class="top"><div class="code">${esc(s.codigo)}</div>${pill}</div>
-        <div class="meta">${a ? `${esc(a.documento || "Documento não informado")} · Rev. ${esc(a.revisao || "—")}${n > 1 ? ` (${n} revisões)` : ""}<br>Atualizado ${fmtDT(a.atualizadoEm)} por ${esc(a.atualizadoPor || "—")}` : "Clique para iniciar a análise"}</div>
+        <div class="meta">${a ? `<b>Análise Nº ${numDe(a)}</b>${n > 1 ? ` (${n} análises)` : ""} · ${esc(a.documento || "Documento não informado")} · ${revTxt(a)}<br>Atualizado ${fmtDT(a.atualizadoEm)} por ${esc(a.atualizadoPor || "—")}` : "Clique para iniciar a análise"}</div>
         <div class="bars">
           <div><span>Análise</span><div class="progress"><span style="width:${pct(c.anal)}%"></span></div><b>${fmt(c.anal).replace(",0%", "%")}</b></div>
           <div><span>Elaboração</span><div class="progress elab"><span style="width:${pct(c.elab)}%"></span></div><b>${fmt(c.elab).replace(",0%", "%")}</b></div>
@@ -1623,14 +1627,16 @@ function abrirSegmento(cod) {
 
 function novaAnalise(cod, base) {
   const ant = base || null;
-  modal(`<h3>${ant ? "Nova revisão" : "Nova análise"} — Segmento ${esc(cod)}</h3>
+  const num = Math.max(0, ...porSegmento(cod).map(x => x.numero || 0)) + 1;
+  modal(`<h3>Nova análise — Segmento ${esc(cod)}</h3>
+    <div class="notice" style="margin-bottom:12px">Esta será a <b>Análise Nº ${num}</b> do segmento ${esc(cod)}.</div>
     <div class="row">Documento (nº)<input type="text" id="mDoc" value="${esc(ant?.documento || "")}" placeholder="Nº do documento As Built"></div>
     <div class="btn-row">
-      <div class="row">Revisão<input type="text" id="mRev" value="${esc(ant ? proxRev(ant.revisao) : "0")}"></div>
+      <div class="row">Revisão do documento<input type="text" id="mRev" value="${esc(ant ? proxRev(ant.revisao || "") : "")}" placeholder="Ex.: 0, 1, A, B"></div>
       <div class="row">Data da análise<input type="date" id="mData" value="${today()}"></div>
     </div>
     <div class="row">Empresa<input type="text" id="mEmp" value="${esc(ant?.empresa || constSeg(S.segmentos.find(s => s.codigo === cod) || { pacotes: [] }))}" placeholder="Construtora"></div>
-    ${ant ? `<label class="row" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="mCopy" checked> Copiar status, responsáveis e observações da Rev. ${esc(ant.revisao)}</label>
+    ${ant ? `<label class="row" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="mCopy" checked> Copiar status, responsáveis e observações da Análise Nº ${numDe(ant)}</label>
     <label class="row" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="mReabrir" checked> Reabrir itens reprovados (voltam para "Aguardando Conclusão")</label>` : ""}
     <div class="actions"><button class="btn btn-light" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Criar e abrir checklist</button></div>`);
   $("mCancel").onclick = closeModal;
@@ -1641,10 +1647,10 @@ function novaAnalise(cod, base) {
       Object.values(itens).forEach(it => { delete it.por; delete it.em; if ($("mReabrir").checked && it.anal === "Reprovado") it.anal = "Aguardando Conclusão"; });
     }
     const id = await store.createAnalise({
-      segmento: cod, disciplina: APP_INFO.disciplina, documento: $("mDoc").value.trim(), revisao: $("mRev").value.trim() || "0",
+      segmento: cod, disciplina: APP_INFO.disciplina, documento: $("mDoc").value.trim(), revisao: $("mRev").value.trim(), numero: num,
       dataAnalise: $("mData").value, empresa: $("mEmp").value.trim(), analista: S.user.nome, itens, revAnterior: ant?.id || null
     });
-    closeModal(); location.hash = "#/checklist/" + encodeURIComponent(id); toast("Análise criada");
+    closeModal(); location.hash = "#/checklist/" + encodeURIComponent(id); toast(`Análise Nº ${num} criada`);
   });
 }
 function proxRev(r) { const n = parseInt(r, 10); if (!isNaN(n) && String(n) === String(r).trim()) return String(n + 1); if (/^[A-Y]$/i.test(r)) return String.fromCharCode(r.toUpperCase().charCodeAt(0) + 1); return ""; }
@@ -1675,12 +1681,12 @@ function buildChecklist(a) {
   let h = `
   <div class="hero" style="margin-bottom:12px">
     <div><div class="rev-tabs" id="revTabs"></div>
-      <h1 style="margin-top:8px">Segmento ${esc(a.segmento)} <span id="ckPacs"></span></h1>
+      <h1 style="margin-top:8px">Segmento ${esc(a.segmento)} — <span id="ckNum">Análise Nº ${numDe(a)}</span> <span id="ckPacs"></span></h1>
       <p>Checklist de análise — As Built ${esc(a.disciplina || APP_INFO.disciplina)}</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-light" id="ckHist">Histórico</button>
       <button class="btn btn-light" id="ckXlsx">Exportar XLSX</button>
-      <button class="btn btn-orange" id="ckNovaRev">+ Nova revisão</button>
+      <button class="btn btn-orange" id="ckNovaRev">+ Nova análise</button>
       <button class="btn btn-danger" id="ckDel">Excluir</button>
     </div>
   </div>
@@ -1688,7 +1694,7 @@ function buildChecklist(a) {
     <div class="ck-head">
       <label>Disciplina<div class="ro">${esc(a.disciplina || APP_INFO.disciplina)}</div></label>
       <label>Documento<input type="text" data-h="documento"></label>
-      <label>Revisão<input type="text" data-h="revisao"></label>
+      <label>Revisão do documento<input type="text" data-h="revisao" placeholder="Ex.: 0, 1, A"></label>
       <label>Data da última análise<input type="date" data-h="dataAnalise"></label>
       <label>Empresa<input type="text" data-h="empresa"></label>
       <label>Analista<input type="text" data-h="analista"></label>
@@ -1744,7 +1750,7 @@ function buildChecklist(a) {
   root.querySelectorAll("[data-h]").forEach(inp => inp.onchange = () => {
     const campo = inp.dataset.h, val = inp.value.trim(), ant = S.ck.a[campo] || "";
     if (val === ant) return;
-    W(() => store.updateHeader(S.ck.id, { [campo]: val }, `Cabeçalho: ${campo} "${ant}" → "${val}"`));
+    W(() => store.updateHeader(S.ck.id, { [campo]: val }, `Cabeçalho: ${({ documento: "Documento", revisao: "Revisão do documento", dataAnalise: "Data da análise", empresa: "Empresa", analista: "Analista" })[campo] || campo} "${ant}" → "${val}"`));
   });
   // Itens
   root.querySelectorAll(".item select").forEach(s => s.onchange = () => {
@@ -1839,7 +1845,7 @@ function renderRevTabs() {
   if (!S.ck?.a || !$("revTabs")) return;
   const l = porSegmento(S.ck.a.segmento);
   $("revTabs").innerHTML = `<a class="btn btn-light btn-sm" href="#/segmentos">← Segmentos</a>` + l.map((r, i) =>
-    `<a class="btn btn-sm ${r.id === S.ck.id ? "btn-primary" : "btn-light"}" href="#/checklist/${encodeURIComponent(r.id)}">Rev. ${esc(r.revisao || "—")}${i === l.length - 1 ? " (vigente)" : ""}</a>`).join("");
+    `<a class="btn btn-sm ${r.id === S.ck.id ? "btn-primary" : "btn-light"}" href="#/checklist/${encodeURIComponent(r.id)}" title="${esc(r.documento || "")} ${revTxt(r)}">Análise Nº ${numDe(r)}${i === l.length - 1 ? " (vigente)" : ""}</a>`).join("");
 }
 
 // Imagens
@@ -1905,7 +1911,7 @@ function showHistorico() {
 }
 function excluirAnalise() {
   const a = S.ck.a;
-  modal(`<h3>Excluir análise</h3><p style="font-size:13px">Isto apaga definitivamente a <b>Rev. ${esc(a.revisao)}</b> do segmento <b>${esc(a.segmento)}</b>, com imagens e histórico. Recomenda-se baixar um backup antes.</p>
+  modal(`<h3>Excluir análise</h3><p style="font-size:13px">Isto apaga definitivamente a <b>Análise Nº ${numDe(a)}</b> do segmento <b>${esc(a.segmento)}</b>, com imagens e histórico. Recomenda-se baixar um backup antes.</p>
     <div class="row">Digite o segmento (${esc(a.segmento)}) para confirmar<input type="text" id="mConf"></div>
     <div class="actions"><button class="btn btn-light" id="mCancel">Cancelar</button><button class="btn btn-danger" id="mOk">Excluir</button></div>`);
   $("mCancel").onclick = closeModal;
@@ -1926,8 +1932,8 @@ function sheetAnalise(a) {
   put([`ANÁLISE DE DOCUMENTOS - AS BUILT`, "", "Disciplina", a.disciplina || APP_INFO.disciplina, "AVANÇO", "ELABORAÇÃO", "ANÁLISE"], { bold: true, head: true });
   put(["", "", "Data da última Análise", fmtD(a.dataAnalise), "", c.elab, c.anal], { pct: true });
   put(["Empresa", a.empresa || "", "Documento", a.documento || ""]);
-  put(["Analista", a.analista || "", "Revisão", a.revisao || ""]);
-  put(["Segmento", a.segmento, "Status", statusDoc(a)]);
+  put(["Analista", a.analista || "", "Revisão do documento", a.revisao || ""]);
+  put(["Segmento", a.segmento, "Status", statusDoc(a), "Análise Nº", numDe(a)]);
   put(["CHECKLIST DE ANÁLISE"], { bold: true, head: true });
   put(["Item", "Descrição", "Imagens relacionadas", "Observações", "Responsável", "Status Elaboração", "Status Análise"], { bold: true, head: true });
   const nImg = {}; (a._imgs || []).forEach(i => nImg[i.item] = (nImg[i.item] || 0) + 1);
@@ -1961,12 +1967,12 @@ function exportAnaliseXlsx(list, nome) {
   const wb = XLSX.utils.book_new(), used = new Set();
   list.forEach(a => {
     if (S.ck?.id === a.id) a._imgs = S.ck.imgs;
-    let n = `${a.segmento} RV${a.revisao || "0"}`.replace(/[\\/?*[\]:]/g, "-").slice(0, 31), i = 2;
+    let n = `${a.segmento} AN${numDe(a)}`.replace(/[\\/?*[\]:]/g, "-").slice(0, 31), i = 2;
     while (used.has(n)) n = n.slice(0, 28) + "_" + i++;
     used.add(n); XLSX.utils.book_append_sheet(wb, sheetAnalise(a), n);
   });
   const a = list[0];
-  XLSX.writeFile(wb, nome || `ANÁLISE AS BUILT - GEOMETRIA - SEG ${a.segmento} RV${a.revisao || "0"}.xlsx`);
+  XLSX.writeFile(wb, nome || `ANALISE AS BUILT - GEOMETRIA - SEG ${a.segmento} - ANALISE ${numDe(a)}.xlsx`);
 }
 
 // ---------------------------------------------------------------------
@@ -2023,8 +2029,8 @@ $("exportJsonBtn").onclick = () => W(async () => {
 $("exportXlsxBtn").onclick = () => {
   if (!S.analises.length) { alert("Nenhuma análise para exportar."); return; }
   const ord = S.segmentos.map(s => s.codigo);
-  const l = [...S.analises].sort((a, b) => (ord.indexOf(a.segmento) - ord.indexOf(b.segmento)) || (a.criadoEm || "").localeCompare(b.criadoEm || ""));
-  exportAnaliseXlsx(l, `ANÁLISES AS BUILT - GEOMETRIA - TODAS - ${today()}.xlsx`);
+  const l = [...S.analises].sort((a, b) => (ord.indexOf(a.segmento) - ord.indexOf(b.segmento)) || (numDe(a) - numDe(b)));
+  exportAnaliseXlsx(l, `ANALISES AS BUILT - GEOMETRIA - TODAS - ${today()}.xlsx`);
 };
 $("importJsonBtn").onclick = () => $("importFile").click();
 $("importFile").onchange = async e => {
