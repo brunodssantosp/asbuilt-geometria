@@ -157,10 +157,10 @@ table.compact td{padding:6px 10px}
 .s-Aprovado{background:#eaf8f0;border-color:#b9e5cc;color:#147a48}
 .s-Reprovado{background:#ffeded;border-color:#f4c2c2;color:#a33e3e}
 .s-NA{background:#eef1f4;border-color:#d5dce3;color:#4a5568}
-.s-Aguardando{background:#fff;color:#6b7785}
+.s-Aguardando{background:#fff5df;border-color:#f3dfae;color:#9b6700}
 .s-Concluido{background:#eaf8f0;border-color:#b9e5cc;color:#147a48}
 .s-Andamento{background:#fff5df;border-color:#f3dfae;color:#9b6700}
-.s-Pendente{background:#fff;color:#6b7785}
+.s-Pendente{background:#ffeded;border-color:#f4c2c2;color:#a33e3e}
 .imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .thumb{position:relative;width:54px;height:54px;border-radius:7px;overflow:hidden;border:1px solid var(--line);cursor:zoom-in;background:#f4f6f8}
 .thumb img{width:100%;height:100%;object-fit:cover}
@@ -236,6 +236,25 @@ table.compact td{padding:6px 10px}
 .ms-opt{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;font-size:12.5px;cursor:pointer}
 .ms-opt:hover{background:#f3f7fb}
 .ms-opt input{margin:0;accent-color:var(--blue)}
+
+/* editor de observações */
+.obs-wrap{border:1px solid var(--line);border-radius:9px;background:#fff}
+.obs-wrap:focus-within{border-color:var(--blue)}
+.obs-tb{display:none;flex-wrap:wrap;align-items:center;gap:2px;padding:4px;border-bottom:1px solid var(--line);background:#f8fafc;border-radius:9px 9px 0 0}
+.obs-wrap:focus-within .obs-tb{display:flex}
+.obs-tb button{border:0;background:none;min-width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:12px;color:var(--text);padding:0 4px}
+.obs-tb button:hover{background:#e6eef6}
+.obs-tb .sw{min-width:16px;width:16px;height:16px;border-radius:50%;margin:0 2px;border:2px solid #fff;box-shadow:0 0 0 1px #c9d3dd}
+.obs-tb .sep{width:1px;height:16px;background:var(--line);margin:0 3px}
+.obs-ed{min-height:38px;max-height:260px;overflow:auto;padding:7px 9px;font-size:12px;line-height:1.45;outline:none;word-break:break-word}
+.obs-ed:empty::before{content:attr(data-ph);color:#a0aec0}
+.obs-ed ul,.obs-ed ol{margin:2px 0;padding-left:18px}
+.obs-lock{display:none;font-size:10.5px;color:#147a48;padding:3px 9px 5px}
+.item.locked .obs-wrap{background:#f6fbf8;border-color:#cfe9da}
+.item.locked .obs-tb{display:none!important}
+.item.locked .obs-ed{cursor:not-allowed;color:#4a5568}
+.item.locked .obs-ed:empty::before{content:"—"}
+.item.locked .obs-lock{display:block}
 
 </style>
 <script>
@@ -343,7 +362,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
       <div class="hero-badge"><b id="dashLast">—</b><br>Última alteração registrada.</div>
     </div>
     <div class="cards">
-      <div class="card"><div class="label" id="kpiLabel">STATUS MÉDIO DA ANÁLISE</div><div class="value" id="kpiAvanco">0%</div><div class="hint">conforme filtros aplicados</div></div>
+      <div class="card"><div class="label" id="kpiLabel">STATUS GERAL DA ANÁLISE</div><div class="value" id="kpiAvanco">0%</div><div class="hint">conforme filtros aplicados</div></div>
       <div class="card"><div class="label">PENDÊNCIA</div><div class="value" id="kpiPend">0%</div><div class="hint">percentual pendente</div></div>
       <div class="card"><div class="label">SEGMENTOS ANALISADOS</div><div class="value" id="kpiSeg">0</div><div class="hint" id="kpiSegHint">com checklist iniciado</div></div>
       <div class="card"><div class="label">ITENS REPROVADOS</div><div class="value" id="kpiRep" style="color:var(--red)">0</div><div class="hint">na análise vigente</div></div>
@@ -355,13 +374,13 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         <div class="chart-legend" id="segmentLegend"></div>
       </div>
       <div class="panel">
-        <div class="panel-head"><div><div class="panel-title">Avanço por disciplina do checklist</div><div class="panel-sub">Média dos segmentos selecionados</div></div></div>
+        <div class="panel-head"><div><div class="panel-title">Avanço por disciplina do checklist</div><div class="panel-sub">Status geral dos segmentos selecionados</div></div></div>
         <div class="chart-wrap"><canvas id="disciplineChart"></canvas></div>
       </div>
     </div>
     <div class="grid">
       <div class="panel">
-        <div class="panel-head"><div><div class="panel-title">Status médio por pacote</div><div class="panel-sub">Média dos segmentos de cada pacote • cor = construtora</div></div></div>
+        <div class="panel-head"><div><div class="panel-title">Status geral por pacote</div><div class="panel-sub">Itens atendidos ÷ total de itens do pacote • cor = construtora</div></div></div>
         <div class="chart-wrap" style="height:280px"><canvas id="pacoteChart"></canvas></div>
       </div>
       <div class="panel">
@@ -1508,11 +1527,18 @@ function dashData() {
   return { segs, keys, ind, secs, P };
 }
 
+// Status geral = itens atendidos ÷ total de itens (segmentos sem análise contam como pendentes)
+function statusGeral(segs, ks, ind) {
+  if (!segs.length || !ks.length) return 0;
+  let ok = 0;
+  segs.forEach(s => { if (s.a) ok += calc(s.a, ks)[ind] * ks.length; });
+  return ok / (segs.length * ks.length);
+}
 function renderDashboard() {
   if ($("view-dashboard").style.display === "none") return;
   const { segs, keys, ind, secs, P } = dashData();
-  const media = avg(segs.map(s => s.v));
-  $("kpiLabel").textContent = ind === "anal" ? "STATUS MÉDIO DA ANÁLISE" : "AVANÇO MÉDIO DA ELABORAÇÃO";
+  const media = statusGeral(segs, keys, ind);
+  $("kpiLabel").textContent = ind === "anal" ? "STATUS GERAL DA ANÁLISE" : "AVANÇO GERAL DA ELABORAÇÃO";
   $("kpiAvanco").textContent = fmt(media);
   $("kpiPend").textContent = fmt(segs.length ? 1 - media : 0);
   const comA = segs.filter(s => s.a);
@@ -1541,25 +1567,32 @@ function renderDashboard() {
   $("segmentLegend").innerHTML = uniq(segs.map(constSeg))
     .map(x => `<span class="legend-item"><span class="legend-dot" style="background:${corEmp(x)}"></span>${esc(x)}</span>`).join("");
 
-  const discVals = CHECKLIST.filter(s => secs.includes(s)).map(sec => avg(segs.map(s => s.a ? calc(s.a, SEC_KEYS[sec.id])[ind] : 0)));
+  const discVals = CHECKLIST.filter(s => secs.includes(s)).map(sec => statusGeral(segs, SEC_KEYS[sec.id], ind));
   draw("disciplineChart", { type: "bar", data: { labels: secs.map(s => s.titulo), datasets: [{ data: discVals.map(v => +(v * 100).toFixed(2)), backgroundColor: "#2f78b9", borderRadius: 6 }] }, options: barOpts(true) });
 
   const pacs = uniq(segs.flatMap(s => s.pacotes)).filter(pc => !P || P.has(pc));
-  const pacVals = pacs.map(pc => avg(segs.filter(s => s.pacotes.includes(pc)).map(s => s.v)));
+  const pacVals = pacs.map(pc => statusGeral(segs.filter(s => s.pacotes.includes(pc)), keys, ind));
   draw("pacoteChart", { type: "bar", data: { labels: pacs.map(pc => [pc, constDe(pc)]), datasets: [{ data: pacVals.map(v => +(v * 100).toFixed(2)), backgroundColor: pacs.map(corPac), borderRadius: 7 }] }, options: barOpts(false) });
 
   const dl = Object.keys(dist), dc = ["#20a464", "#94a3b8", "#dc5a5a", "#f5a021"];
   const tot = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
-  draw("itensChart", { type: "doughnut", data: { labels: dl, datasets: [{ data: dl.map(k => dist[k]), backgroundColor: dc, borderWidth: 2, borderColor: "#fff" }] },
+  const totItens = Object.values(dist).reduce((a, b) => a + b, 0);
+  const centro = { id: "centro", afterDraw(c) {
+    const m = c.getDatasetMeta(0).data[0]; if (!m) return;
+    const g = c.ctx; g.save(); g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = "#243447"; g.font = '800 26px "Segoe UI",Arial,sans-serif'; g.fillText(totItens.toLocaleString("pt-BR"), m.x, m.y - 6);
+    g.fillStyle = "#718096"; g.font = '600 11px "Segoe UI",Arial,sans-serif'; g.fillText("itens no total", m.x, m.y + 16); g.restore();
+  } };
+  draw("itensChart", { type: "doughnut", plugins: [centro], data: { labels: dl, datasets: [{ data: dl.map(k => dist[k]), backgroundColor: dc, borderWidth: 2, borderColor: "#fff" }] },
     options: { responsive: true, maintainAspectRatio: false, cutout: "58%", plugins: { legend: { position: "right", labels: { boxWidth: 12, font: { weight: "600" } } },
       datalabels: { color: "#fff", font: { weight: "700", size: 11 }, formatter: v => v / tot >= 0.04 ? v : "" } } } });
 
   // Matriz
   $("matrixCount").textContent = `${secs.length} disciplinas × ${segs.length} segmentos`;
-  let h = "<thead><tr><th>#</th><th>Disciplina</th>" + segs.map(s => `<th class="num"><a href="#" data-seg="${esc(s.codigo)}">${esc(s.codigo)}</a><br>${empChip(constSeg(s))}<br>${s.pacotes.map(pacChip).join("")}<br><small style="font-weight:500;text-transform:none">${s.a ? `Análise Nº ${numDe(s.a)} · ${revTxt(s.a)}` : "sem análise"}</small></th>`).join("") + '<th class="num">Média</th></tr></thead><tbody>';
+  let h = "<thead><tr><th>#</th><th>Disciplina</th>" + segs.map(s => `<th class="num"><a href="#" data-seg="${esc(s.codigo)}">${esc(s.codigo)}</a><br>${empChip(constSeg(s))}<br>${s.pacotes.map(pacChip).join("")}<br><small style="font-weight:500;text-transform:none">${s.a ? `Análise Nº ${numDe(s.a)} · ${revTxt(s.a)}` : "sem análise"}</small></th>`).join("") + '<th class="num">Status geral</th></tr></thead><tbody>';
   const row = (id, nome, ks, bold) => {
     const vals = segs.map(s => s.a ? calc(s.a, ks)[ind] : null);
-    const m = avg(vals.map(v => v || 0));
+    const m = statusGeral(segs, ks, ind);
     return `<tr${bold ? ' style="background:#f8fafc"' : ""}><td>${id}</td><td><b>${esc(nome)}</b></td>` + vals.map(v => v === null ? '<td class="num muted">—</td>' :
       `<td class="num"><span class="pct">${fmt(v)}</span><div class="progress ${ind === "elab" ? "elab" : ""}"><span style="width:${pct(v)}%"></span></div></td>`).join("") +
       `<td class="num"><span class="status-pill ${stClass(m)}">${fmt(m)}</span></td></tr>`;
@@ -1737,7 +1770,15 @@ function buildChecklist(a) {
         <div class="c-resp">${sel(RESP, "", k, "resp")}</div>
         <div>${sel(ELAB, "", k, "elab")}</div>
         <div>${sel(ANAL, "", k, "anal")}</div>
-        <div class="c-obs"><textarea rows="2" data-k="${k}" data-c="obs" placeholder="Observações…"></textarea>
+        <div class="c-obs"><div class="obs-wrap">
+          <div class="obs-tb">
+            <button type="button" data-cmd="bold" title="Negrito (Ctrl+B)"><b>B</b></button><button type="button" data-cmd="italic" title="Itálico (Ctrl+I)"><i>I</i></button><button type="button" data-cmd="underline" title="Sublinhado (Ctrl+U)"><u>U</u></button><button type="button" data-cmd="strikeThrough" title="Tachado"><s>S</s></button>
+            <span class="sep"></span>${CORES_TXT.map(c => `<button type="button" class="sw" data-color="${c[0]}" title="Cor: ${c[1]}" style="background:${c[0]}"></button>`).join("")}
+            <span class="sep"></span><button type="button" data-hl="#fff176" title="Marca-texto"><span style="background:#fff176;padding:0 3px">ab</span></button><button type="button" data-cmd="insertUnorderedList" title="Lista">•≡</button><button type="button" data-cmd="removeFormat" title="Limpar formatação">⨯</button>
+          </div>
+          <div class="obs-ed" contenteditable="true" data-k="${k}" data-ph="Observações…"></div>
+          <div class="obs-lock">🔒 Item aprovado — observações e imagens bloqueadas</div>
+        </div>
           <div class="imgs" data-imgs="${k}"></div></div>
       </div>`;
     });
@@ -1759,15 +1800,31 @@ function buildChecklist(a) {
     const nome = { resp: "Responsável", elab: "Status Elaboração", anal: "Status Análise" }[c];
     W(() => store.updateItem(S.ck.id, k, c, s.value, `Item ${unkey(k)}: ${nome} "${ant}" → "${s.value}"`));
   });
-  root.querySelectorAll(".item textarea").forEach(t => {
+  root.querySelectorAll(".obs-ed").forEach(ed => {
     const salvar = () => {
-      clearTimeout(t._d);
-      const k = t.dataset.k, ant = S.ck.a.itens?.[k]?.obs || "";
-      if (t.value === ant) return;
-      W(() => store.updateItem(S.ck.id, k, "obs", t.value, `Item ${unkey(k)}: observação alterada`));
+      clearTimeout(ed._d);
+      const k = ed.dataset.k;
+      if (bloqueado(k)) return;
+      const val = textoPuro(ed.innerHTML).trim() ? sanitizar(ed.innerHTML) : "";
+      if (val === obsHtml(S.ck.a.itens?.[k]?.obs || "")) return;
+      W(() => store.updateItem(S.ck.id, k, "obs", val, `Item ${unkey(k)}: observação alterada`));
     };
-    t.oninput = () => { clearTimeout(t._d); t._d = setTimeout(salvar, 1500); autoGrow(t); };
-    t.onchange = salvar; t.onblur = salvar;
+    ed.oninput = () => { clearTimeout(ed._d); ed._d = setTimeout(salvar, 1500); };
+    ed.onblur = salvar;
+  });
+  root.querySelectorAll(".obs-tb button").forEach(b => {
+    b.onmousedown = e => e.preventDefault(); // mantém a seleção no editor
+    b.onclick = () => {
+      const ed = b.closest(".obs-wrap").querySelector(".obs-ed");
+      if (ed.contentEditable !== "true") return;
+      ed.focus();
+      if (b.dataset.color || b.dataset.hl) {
+        document.execCommand("styleWithCSS", false, true);
+        b.dataset.color ? document.execCommand("foreColor", false, b.dataset.color) : document.execCommand("hiliteColor", false, b.dataset.hl);
+        document.execCommand("styleWithCSS", false, false);
+      } else document.execCommand(b.dataset.cmd, false, null);
+      ed.oninput();
+    };
   });
   root.querySelectorAll(".item").forEach(row => {
     row.addEventListener("focusin", () => setFocus(row.dataset.item));
@@ -1795,7 +1852,35 @@ function buildChecklist(a) {
   $("ckDel").onclick = excluirAnalise;
   renderRevTabs();
 }
-function autoGrow(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight + 2, 240) + "px"; }
+const CORES_TXT = [["#243447", "Preto"], ["#dc2626", "Vermelho"], ["#ea7a00", "Laranja"], ["#16a34a", "Verde"], ["#2563eb", "Azul"], ["#7c3aed", "Roxo"]];
+const bloqueado = k => S.ck?.a?.itens?.[k]?.anal === "Aprovado";
+// Observações em HTML com formatação básica (sanitizado contra código malicioso)
+const TAGS_OK = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "SPAN", "FONT", "BR", "DIV", "P", "UL", "OL", "LI"]);
+function sanitizar(html) {
+  const t = document.createElement("template"); t.innerHTML = html;
+  const limpa = n => {
+    for (const c of [...n.childNodes]) {
+      if (c.nodeType === 3) continue;
+      if (c.nodeType !== 1 || ["SCRIPT", "STYLE", "IFRAME", "OBJECT", "IMG", "SVG", "MATH"].includes(c.tagName)) { c.remove(); continue; }
+      limpa(c);
+      if (!TAGS_OK.has(c.tagName)) { c.replaceWith(...c.childNodes); continue; }
+      const cor = c.style?.color, fundo = c.style?.backgroundColor, fc = c.tagName === "FONT" ? c.getAttribute("color") : null;
+      const neg = /bold|[6-9]00/.test(c.style?.fontWeight || ""), ita = c.style?.fontStyle === "italic", dec = c.style?.textDecorationLine || c.style?.textDecoration || "";
+      [...c.attributes].forEach(a => c.removeAttribute(a.name));
+      if (cor) c.style.color = cor; if (fundo) c.style.backgroundColor = fundo; if (fc && /^#?[\w(),. %]+$/.test(fc)) c.setAttribute("color", fc);
+      if (neg) c.style.fontWeight = "bold"; if (ita) c.style.fontStyle = "italic"; if (/underline|line-through/.test(dec)) c.style.textDecoration = dec.match(/underline|line-through/g).join(" ");
+    }
+  };
+  limpa(t.content);
+  return t.innerHTML;
+}
+const obsHtml = v => !v ? "" : /<[a-z][\s\S]*>/i.test(v) ? sanitizar(v) : esc(v).replace(/\n/g, "<br>");
+function textoPuro(v) {
+  if (!v) return "";
+  if (!/<[a-z][\s\S]*>/i.test(v)) return v;
+  const d = document.createElement("div"); d.innerHTML = sanitizar(v.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p|li)>/gi, "\n"));
+  return d.textContent.replace(/\n{3,}/g, "\n\n").trim();
+}
 function setFocus(k) {
   if (S.focusKey === k) return;
   document.querySelectorAll(".item.focus").forEach(r => r.classList.remove("focus"));
@@ -1805,11 +1890,17 @@ function setFocus(k) {
 function updateChecklist(a) {
   const root = $("checklistRoot"), act = document.activeElement;
   root.querySelectorAll("[data-h]").forEach(inp => { if (inp !== act) inp.value = a[inp.dataset.h] || ""; });
-  root.querySelectorAll(".item select, .item textarea").forEach(el => {
+  root.querySelectorAll(".obs-ed").forEach(ed => {
+    const k = ed.dataset.k, html = obsHtml(a.itens?.[k]?.obs || ""), lock = a.itens?.[k]?.anal === "Aprovado";
+    if (ed !== act && ed.innerHTML !== html) ed.innerHTML = html;
+    ed.contentEditable = lock ? "false" : "true";
+    ed.closest(".item").classList.toggle("locked", lock);
+  });
+  root.querySelectorAll(".item select").forEach(el => {
     const it = a.itens?.[el.dataset.k] || {};
-    const v = it[el.dataset.c] ?? (el.dataset.c === "obs" ? "" : el.options[0].value);
-    if (el !== act && el.value !== v) { el.value = v; if (el.tagName === "TEXTAREA") autoGrow(el); }
-    if (el.tagName === "SELECT") el.className = selClass(el.value);
+    const v = it[el.dataset.c] ?? el.options[0].value;
+    if (el !== act && el.value !== v) el.value = v;
+    el.className = selClass(el.value);
   });
   root.querySelectorAll("[data-who]").forEach(w => { const it = a.itens?.[w.dataset.who]; w.textContent = it?.por ? `Alterado por ${it.por} em ${fmtDT(it.em)}` : ""; });
   const c = calc(a);
@@ -1823,6 +1914,8 @@ function updateChecklist(a) {
   const seg = S.segmentos.find(s => s.codigo === a.segmento);
   $("ckPacs").innerHTML = seg ? seg.pacotes.map(pacChip).join(" ") + " " + empChip(constSeg(seg)) : "";
   applyFiltro(); renderRevTabs();
+  const lockSig = Object.keys(a.itens || {}).filter(bloqueado).join(",");
+  if (lockSig !== S.ck.lockSig) { S.ck.lockSig = lockSig; renderImgs(); }
 }
 
 function applyFiltro() {
@@ -1831,7 +1924,7 @@ function applyFiltro() {
   $("ckFiltro").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.f === f));
   document.querySelectorAll("#checklistRoot .item").forEach(row => {
     const it = a.itens?.[row.dataset.item] || {};
-    const show = f === "todos" || (f === "pend" && (it.anal || "Aguardando Conclusão") === "Aguardando Conclusão") || (f === "rep" && it.anal === "Reprovado") || (f === "obs" && (it.obs || "").trim());
+    const show = f === "todos" || (f === "pend" && (it.anal || "Aguardando Conclusão") === "Aguardando Conclusão") || (f === "rep" && it.anal === "Reprovado") || (f === "obs" && textoPuro(it.obs).trim());
     row.style.display = show ? "" : "none";
   });
   document.querySelectorAll("#checklistRoot .sec").forEach(sec => {
@@ -1854,12 +1947,13 @@ function renderImgs() {
   const by = {}; S.ck.imgs.sort((a, b) => (a.em || "").localeCompare(b.em || "")).forEach(i => (by[i.item] ||= []).push(i));
   document.querySelectorAll("#checklistRoot [data-imgs]").forEach(box => {
     const k = box.dataset.imgs;
-    box.innerHTML = (by[k] || []).map(i => `<div class="thumb" data-img="${i.id}" title="${esc(i.autor || "")} — ${fmtDT(i.em)}"><img src="${i.dataUrl}" alt=""><button class="x" data-del="${i.id}" title="Remover">✕</button></div>`).join("")
-      + `<button class="add-img" data-add="${k}" title="Adicionar imagem (ou Ctrl+V)">＋<br>imagem</button>`;
+    const lock = bloqueado(k);
+    box.innerHTML = (by[k] || []).map(i => `<div class="thumb" data-img="${i.id}" title="${esc(i.autor || "")} — ${fmtDT(i.em)}"><img src="${i.dataUrl}" alt="">${lock ? "" : `<button class="x" data-del="${i.id}" title="Remover">✕</button>`}</div>`).join("")
+      + (lock ? "" : `<button class="add-img" data-add="${k}" title="Adicionar imagem (ou Ctrl+V)">＋<br>imagem</button>`);
   });
   document.querySelectorAll("#checklistRoot .thumb").forEach(t => t.onclick = e => {
     const img = S.ck.imgs.find(i => i.id === t.dataset.img);
-    if (e.target.dataset.del) { e.stopPropagation(); if (confirm("Remover esta imagem?")) W(() => store.deleteImagem(S.ck.id, img.id, img.item)); return; }
+    if (e.target.dataset.del) { e.stopPropagation(); if (bloqueado(img.item)) return; if (confirm("Remover esta imagem?")) W(() => store.deleteImagem(S.ck.id, img.id, img.item)); return; }
     $("lightboxImg").src = img.dataUrl; $("lightboxCap").textContent = `Item ${unkey(img.item)} · ${img.autor || ""} · ${fmtDT(img.em)}`; $("lightbox").style.display = "grid";
   });
   document.querySelectorAll("#checklistRoot [data-add]").forEach(b => b.onclick = e => {
@@ -1872,10 +1966,13 @@ $("lightbox").onclick = () => $("lightbox").style.display = "none";
 document.addEventListener("paste", e => {
   if (!S.ck?.built || !S.focusKey || $("view-checklist").style.display === "none") return;
   const files = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile());
-  if (!files.length) return;
-  e.preventDefault(); files.forEach(f => addImg(S.focusKey, f));
+  if (files.length) { e.preventDefault(); files.forEach(f => addImg(S.focusKey, f)); return; }
+  if (e.target.closest?.(".obs-ed")) { // cola só o texto (sem formatação de outros programas)
+    e.preventDefault(); document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+  }
 });
 async function addImg(k, file) {
+  if (bloqueado(k)) { toast(`Item ${unkey(k)} aprovado — imagens bloqueadas`); return; }
   try {
     const url = await compress(file);
     await W(() => store.addImagem(S.ck.id, k, url, file.name || "print"));
@@ -1944,7 +2041,7 @@ function sheetAnalise(a) {
     sec.itens.forEach(it => {
       if (it.sub && it.sub !== sub) { sub = it.sub; put([it.id.split(".").slice(0, 2).join("."), it.sub], { bold: true }); }
       const v = a.itens?.[key(it.id)] || {};
-      put([it.id, it.desc, nImg[key(it.id)] ? `${nImg[key(it.id)]} imagem(ns) no site` : "", v.obs || "", v.resp || "", v.elab || "Pendente", v.anal || "Aguardando Conclusão"], { item: true });
+      put([it.id, it.desc, nImg[key(it.id)] ? `${nImg[key(it.id)]} imagem(ns) no site` : "", textoPuro(v.obs), v.resp || "", v.elab || "Pendente", v.anal || "Aguardando Conclusão"], { item: true });
     });
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
