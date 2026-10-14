@@ -1361,6 +1361,9 @@ const numDe = a => a ? (a.numero ?? porSegmento(a.segmento).find(x => x.id === a
 const revTxt = a => a?.revisao ? "Rev. " + esc(a.revisao) : "Rev. —";
 function vigente(cod) { const l = porSegmento(cod); return l[l.length - 1] || null; }
 function pacotesTodos() { return uniq(S.segmentos.flatMap(s => s.pacotes)); }
+// Construtoras de um pacote (a do pacote + exceções por segmento, ex.: PCT 1 = EMPA + EGIS na Alça)
+const empsPac = (p, segs = S.segmentos) => { const l = uniq(segs.filter(s => s.pacotes.includes(p)).map(constSeg)); return l.length ? [constDe(p), ...l].filter((e, i, a) => a.indexOf(e) === i && (l.includes(e))) : [constDe(p)]; };
+const empChips = l => l.map(empChip).join(" ");
 
 // Envolve escritas para mostrar "Salvando…"
 async function W(fn) {
@@ -1513,7 +1516,7 @@ function setupFilters() {
 }
 function fillPacFilter() {
   const E = msVal("fConstrutora");
-  MS.fPacote.setOpts(pacotesTodos().filter(p => !E || E.has(constDe(p)) || S.segmentos.some(s => s.pacotes.includes(p) && E.has(constSeg(s)))).map(p => ({ value: p, label: `${p} — ${constDe(p)}` })));
+  MS.fPacote.setOpts(pacotesTodos().filter(p => !E || E.has(constDe(p)) || S.segmentos.some(s => s.pacotes.includes(p) && E.has(constSeg(s)))).map(p => ({ value: p, label: `${p} — ${empsPac(p).join(" / ")}` })));
 }
 function fillSegFilter() {
   const E = msVal("fConstrutora"), P = msVal("fPacote");
@@ -1581,7 +1584,7 @@ function renderDashboard() {
 
   const pacs = uniq(segs.flatMap(s => s.pacotes)).filter(pc => !P || P.has(pc));
   const pacVals = pacs.map(pc => statusGeral(segs.filter(s => s.pacotes.includes(pc)), keys, ind));
-  draw("pacoteChart", { type: "bar", data: { labels: pacs.map(pc => [pc, constDe(pc)]), datasets: [{ data: pacVals.map(v => +(v * 100).toFixed(2)), backgroundColor: pacs.map(corPac), borderRadius: 7 }] }, options: barOpts(false) });
+  draw("pacoteChart", { type: "bar", data: { labels: pacs.map(pc => [pc, empsPac(pc, segs).join(" / ")]), datasets: [{ data: pacVals.map(v => +(v * 100).toFixed(2)), backgroundColor: pacs.map(pc => corEmp(empsPac(pc, segs)[0])), borderRadius: 7 }] }, options: barOpts(false) });
 
   const dl = Object.keys(dist), dc = ["#20a464", "#94a3b8", "#dc5a5a", "#f5a021"];
   const tot = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
@@ -1638,13 +1641,13 @@ function renderSegmentos() {
     const segs = S.segmentos.filter(s => s.pacotes[0] === p || (s.pacotes.includes(p) && !pacs.includes(s.pacotes[0]))).filter(match);
     const extra = S.segmentos.filter(s => s.pacotes.includes(p) && s.pacotes[0] !== p).filter(match);
     if (!segs.length && !extra.length) return;
-    html += `<div class="pac-group"><div class="pac-title"><span class="bar" style="background:${corPac(p)}"></span>${esc(p)} ${empChip(constDe(p))}<span class="muted" style="font-weight:500;font-size:12px">${extra.length ? "· também inclui " + extra.map(s => esc(s.codigo)).join(", ") : ""}</span></div><div class="seg-cards">`;
+    html += `<div class="pac-group"><div class="pac-title"><span class="bar" style="background:${corPac(p)}"></span>${esc(p)} ${empChips(empsPac(p))}<span class="muted" style="font-weight:500;font-size:12px">${extra.length ? "· também inclui " + extra.map(s => esc(s.codigo)).join(", ") : ""}</span></div><div class="seg-cards">`;
     segs.forEach(s => {
       const a = vigente(s.codigo), n = porSegmento(s.codigo).length;
       const c = a ? calc(a) : { elab: 0, anal: 0, counts: {} };
       const pill = !a ? '<span class="status-pill st-none">Sem análise</span>' : `<span class="status-pill ${stClass(c.anal)}">${statusDoc(a)}</span>`;
       html += `<div class="seg-card" data-seg="${esc(s.codigo)}" style="border-top-color:${corEmp(constSeg(s))}">
-        <div class="top"><div class="code">${esc(s.codigo)}${constSeg(s) !== constDe(p) ? " " + empChip(constSeg(s)) : ""}</div>${pill}</div>
+        <div class="top"><div class="code">${esc(s.codigo)}</div>${pill}</div>
         <div class="meta">${a ? `<b>Análise Nº ${numDe(a)}</b>${n > 1 ? ` (${n} análises)` : ""} · ${esc(a.documento || "Documento não informado")} · ${revTxt(a)}<br>Atualizado ${fmtDT(a.atualizadoEm)} por ${esc(a.atualizadoPor || "—")}` : "Clique para iniciar a análise"}</div>
         <div class="bars">
           <div><span>Análise</span><div class="progress"><span style="width:${pct(c.anal)}%"></span></div><b>${fmt(c.anal).replace(",0%", "%")}</b></div>
@@ -2114,8 +2117,8 @@ function drawCfg() {
 function drawConstCfg() {
   const pacs = uniq(cfgSegs.flatMap(s => s.pacotes));
   $("constCfgTable").innerHTML = "<thead><tr><th>Pacote</th><th>Construtora</th><th>Segmentos</th></tr></thead><tbody>" + pacs.map(p =>
-    `<tr><td><b>${esc(p)}</b></td><td><input type="text" list="constList" data-pac="${esc(p)}" value="${esc(cfgConst[p] || "")}" style="width:140px"> ${cfgConst[p] ? empChip(cfgConst[p]) : ""}</td>
-     <td class="muted">${cfgSegs.filter(s => s.pacotes.includes(p)).map(s => esc(s.codigo)).join(", ")}</td></tr>`).join("") + "</tbody>"
+    `<tr><td><b>${esc(p)}</b></td><td><input type="text" list="constList" data-pac="${esc(p)}" value="${esc(cfgConst[p] || "")}" style="width:140px"> ${cfgConst[p] ? empChips(uniq([cfgConst[p], ...cfgSegs.filter(s => s.pacotes.includes(p)).map(s => CONSTRUTORA_POR_SEGMENTO[s.codigo] || cfgConst[p])])) : ""}</td>
+     <td class="muted">${cfgSegs.filter(s => s.pacotes.includes(p)).map(s => esc(s.codigo) + (CONSTRUTORA_POR_SEGMENTO[s.codigo] && CONSTRUTORA_POR_SEGMENTO[s.codigo] !== cfgConst[p] ? ` <b>(${esc(CONSTRUTORA_POR_SEGMENTO[s.codigo])})</b>` : "")).join(", ")}</td></tr>`).join("") + "</tbody>"
     + `<datalist id="constList">${Object.keys(CONSTRUTORAS).map(c => `<option value="${esc(c)}">`).join("")}</datalist>`;
   $("constCfgTable").querySelectorAll("input").forEach(inp => inp.onchange = () => { cfgConst[inp.dataset.pac] = inp.value.trim(); drawConstCfg(); });
 }
