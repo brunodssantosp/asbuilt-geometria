@@ -258,6 +258,25 @@ table.compact td{padding:6px 10px}
 .item.locked-na .obs-wrap{background:#f4f6f8;border-color:#d5dce3}
 .item.locked-na .obs-lock{color:#4a5568}
 
+/* ---- Perfis de acesso ---- */
+.role-badge{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:99px;letter-spacing:.2px;vertical-align:middle}
+.role-admin{background:#e3effa;color:#1f5f99}
+.role-elaborador{background:#fff0dc;color:#b45f06}
+.role-visualizador{background:#eef1f4;color:#4a5568}
+.user-add{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
+.user-add input{flex:1 1 240px}
+.user-add select{width:auto}
+#userTable select{width:auto;min-width:140px}
+.item select:disabled{opacity:.85;cursor:not-allowed}
+.ck-head input:disabled{background:#f6f8fa;color:#4a5568;cursor:not-allowed}
+.item.alt-elab{box-shadow:inset 4px 0 0 #f08a00;background:#fffaf2}
+.alt-badge{margin-top:5px;display:inline-block;background:#fff0dc;color:#9a5200;border:1px solid #f6cf98;border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:600;line-height:1.5}
+.alt-badge .ciente{margin-left:6px;border:1px solid #1f8f55;background:#fff;color:#1f8f55;border-radius:6px;font-size:10.5px;font-weight:800;padding:1px 7px;cursor:pointer}
+.alt-badge .ciente:hover{background:#1f8f55;color:#fff}
+.thumb.thumb-elab{outline:2px solid #f08a00;outline-offset:1px}
+.alt-count{margin-top:6px;font-size:11px;color:#b45f06;font-weight:700}
+body[data-perfil="visualizador"] #matrixTable a{pointer-events:none;color:inherit;text-decoration:none}
+
 </style>
 <script>
 /*!
@@ -335,7 +354,7 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
   </div>
   <div class="side-user">
     <div class="sync" id="syncBadge"></div>
-    <div><b id="userName">—</b><br><small id="userEmail" class="muted"></small></div>
+    <div><b id="userName">—</b><br><small id="userEmail" class="muted"></small><div id="userRole" style="margin-top:5px"></div></div>
     <div class="btn-row" style="margin-top:8px">
       <button class="btn btn-light" id="renameBtn">Meu nome</button>
       <button class="btn btn-danger" id="logoutBtn">Sair</button>
@@ -450,6 +469,18 @@ var XLSX={};function make_xlsx_lib(a){a.version="0.18.5",a.style_version="1.2.0"
         </div>
       </div>
     </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><div><div class="panel-title">Usuários e acessos</div>
+        <div class="panel-sub"><b>Administrador:</b> acesso completo • <b>Elaborador:</b> dashboard da sua empresa e, na análise, só a elaboração (status, observações e imagens — alterações ficam destacadas) • <b>Visualizador:</b> só o dashboard.<br>
+        O login (e-mail e senha) continua sendo criado no Firebase → Authentication. Quem entrar sem perfil definido acessa como Visualizador e aparece nesta lista.</div></div></div>
+      <div class="user-add">
+        <input type="email" id="newUserEmail" placeholder="e-mail do usuário">
+        <select id="newUserPerfil"><option value="visualizador">Visualizador</option><option value="elaborador">Elaborador</option><option value="admin">Administrador</option></select>
+        <select id="newUserEmp" style="display:none"></select>
+        <button class="btn btn-primary" id="addUserBtn">Salvar acesso</button>
+      </div>
+      <div class="table-wrap"><table id="userTable" class="compact"></table></div>
+    </div>
   </section>
 </main>
 </div>
@@ -544,6 +575,16 @@ const CONSTRUTORA_POR_SEGMENTO = {
 
 // Pacotes antigos que foram unificados (convertidos automaticamente)
 const PACOTES_UNIFICADOS = { "PCT 1A": "PCT 1", "PCT 1B": "PCT 1" };
+
+// 7) Perfis de acesso
+//    Administrador principal (fixo — também está nas regras do Firestore).
+//    Os demais usuários recebem o perfil na aba Configurações > Usuários e acessos.
+const ADMINS = ["brunodssantosp@gmail.com"];
+const PERFIS = {
+  admin:        { nome: "Administrador", desc: "Acesso completo" },
+  elaborador:   { nome: "Elaborador",    desc: "Dashboard da sua empresa; altera só a elaboração (status, observações e imagens)" },
+  visualizador: { nome: "Visualizador",  desc: "Somente o dashboard" }
+};
 
 // Gerado a partir de "ANÁLISE DE DOCUMENTOS - AS BUILT - GEOMETRIA.xlsx"
 const CHECKLIST = [
@@ -1112,9 +1153,35 @@ async function firebaseStore() {
       await F.setDoc(F.doc(db, "config", "segmentos"), { lista, construtoras, atualizadoPor: user()?.nome, atualizadoEm: now() });
     },
 
-    watchAnalises(cb) {
-      return F.onSnapshot(F.collection(db, "analises"), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
+    // segs: lista de segmentos permitidos (elaborador) — uma escuta por segmento (exigência das regras)
+    watchAnalises(cb, segs) {
+      if (!segs) return F.onSnapshot(F.collection(db, "analises"), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
+      if (!segs.length) { cb([]); return () => {}; }
+      const parts = {};
+      const uns = segs.map(sg => F.onSnapshot(F.query(F.collection(db, "analises"), F.where("segmento", "==", sg)), s => {
+        parts[sg] = s.docs.map(d => ({ id: d.id, ...d.data() })); cb(Object.values(parts).flat());
+      }, onErr));
+      return () => uns.forEach(u => u());
     },
+
+    // Perfis de acesso (coleção "usuarios", id = e-mail em minúsculas)
+    watchPerfil(cb) {
+      const e = (auth.currentUser?.email || "").toLowerCase();
+      return F.onSnapshot(F.doc(db, "usuarios", e), s => cb(s.exists() ? s.data() : null), err => { console.error(err); cb(null); });
+    },
+    async registrarAcesso() {
+      const e = (auth.currentUser?.email || "").toLowerCase(), ref = F.doc(db, "usuarios", e);
+      try {
+        const s = await F.getDoc(ref);
+        if (!s.exists()) await F.setDoc(ref, { email: e, nome: user()?.nome || "", perfil: "visualizador", criadoEm: now(), ultimoAcesso: now() });
+        else await F.updateDoc(ref, { nome: user()?.nome || "", ultimoAcesso: now() });
+      } catch (err) { console.warn("registro de acesso:", err.message); }
+    },
+    watchUsuarios(cb) { return F.onSnapshot(F.collection(db, "usuarios"), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr); },
+    async saveUsuario(email, patch) {
+      await F.setDoc(F.doc(db, "usuarios", email.toLowerCase()), { email: email.toLowerCase(), ...patch, atualizadoPor: user()?.nome, atualizadoEm: now() }, { merge: true });
+    },
+    async deleteUsuario(email) { await F.deleteDoc(F.doc(db, "usuarios", email.toLowerCase())); },
     watchAnalise(id, cb) {
       return F.onSnapshot(F.doc(db, "analises", id), s => cb(s.exists() ? { id: s.id, ...s.data(), _pendente: s.metadata.hasPendingWrites } : null), onErr);
     },
@@ -1133,13 +1200,17 @@ async function firebaseStore() {
       log(b, id, { tipo: "cabecalho", texto });
       await b.commit();
     },
-    async updateItem(id, key, campo, valor, texto) {
+    // ext.item: campos extras do item (ex.: alt = marca de alteração do elaborador); ext.doc: campos extras da análise
+    async updateItem(id, key, campo, valor, texto, ext = {}) {
       const b = F.writeBatch(db);
-      b.update(F.doc(db, "analises", id), {
+      const upd = {
         [`itens.${key}.${campo}`]: valor,
         [`itens.${key}.por`]: user()?.nome, [`itens.${key}.em`]: now(),
         atualizadoPor: user()?.nome, atualizadoEm: now()
-      });
+      };
+      for (const [c, v] of Object.entries(ext.item || {})) upd[`itens.${key}.${c}`] = v;
+      Object.assign(upd, ext.doc || {});
+      b.update(F.doc(db, "analises", id), upd);
       log(b, id, { tipo: "item", item: key, texto });
       await b.commit();
     },
@@ -1169,16 +1240,16 @@ async function firebaseStore() {
       return F.onSnapshot(F.query(F.collection(db, "imagens"), F.where("analiseId", "==", analiseId)),
         s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
     },
-    async addImagem(analiseId, item, dataUrl, nome) {
+    async addImagem(analiseId, item, dataUrl, nome, extra = {}, prefixo = "") {
       const b = F.writeBatch(db);
-      b.set(F.doc(F.collection(db, "imagens")), { analiseId, item, dataUrl, nome: nome || "", autor: user()?.nome, em: now() });
-      log(b, analiseId, { tipo: "imagem", item, texto: `Imagem adicionada ao item ${item.slice(1).replaceAll("_", ".")}` });
+      b.set(F.doc(F.collection(db, "imagens")), { analiseId, item, dataUrl, nome: nome || "", autor: user()?.nome, email: (user()?.email || "").toLowerCase(), em: now(), ...extra });
+      log(b, analiseId, { tipo: "imagem", item, texto: `${prefixo}Imagem adicionada ao item ${item.slice(1).replaceAll("_", ".")}` });
       await b.commit();
     },
-    async deleteImagem(analiseId, imgId, item) {
+    async deleteImagem(analiseId, imgId, item, prefixo = "") {
       const b = F.writeBatch(db);
       b.delete(F.doc(db, "imagens", imgId));
-      log(b, analiseId, { tipo: "imagem", item, texto: `Imagem removida do item ${item.slice(1).replaceAll("_", ".")}` });
+      log(b, analiseId, { tipo: "imagem", item, texto: `${prefixo}Imagem removida do item ${item.slice(1).replaceAll("_", ".")}` });
       await b.commit();
     },
 
@@ -1218,7 +1289,7 @@ async function firebaseStore() {
 function localStore() {
   const K = "asbuilt-geo-local-v1";
   const load = () => { try { return JSON.parse(localStorage.getItem(K)) || {}; } catch { return {}; } };
-  let db = Object.assign({ segmentos: null, analises: {}, imagens: {}, historico: {}, user: null }, load());
+  let db = Object.assign({ segmentos: null, analises: {}, imagens: {}, historico: {}, usuarios: {}, user: null }, load());
   const subs = new Set();
   const save = () => { try { localStorage.setItem(K, JSON.stringify(db)); } catch (e) { alert("Armazenamento local cheio: " + e.message); } subs.forEach(f => f()); };
   const sub = f => { subs.add(f); f(); return () => subs.delete(f); };
@@ -1239,7 +1310,12 @@ function localStore() {
     user,
     watchSegmentos(cb) { return sub(() => cb(db.segmentos || SEGMENTOS_PADRAO, db.construtoras || null)); },
     async saveSegmentos(lista, construtoras) { db.segmentos = lista; db.construtoras = construtoras; save(); },
-    watchAnalises(cb) { return sub(() => cb(Object.entries(db.analises).map(([id, a]) => ({ id, ...clone(a) })))); },
+    watchAnalises(cb, segs) { return sub(() => cb(Object.entries(db.analises).map(([id, a]) => ({ id, ...clone(a) })).filter(a => !segs || segs.includes(a.segmento)))); },
+    watchPerfil(cb) { return sub(() => cb(db.user ? clone(db.usuarios[db.user.email.toLowerCase()] || null) : null)); },
+    async registrarAcesso() { const e = db.user.email.toLowerCase(); db.usuarios[e] = db.usuarios[e] ? { ...db.usuarios[e], nome: db.user.nome, ultimoAcesso: now() } : { email: e, nome: db.user.nome, perfil: "visualizador", criadoEm: now(), ultimoAcesso: now() }; save(); },
+    watchUsuarios(cb) { return sub(() => cb(Object.entries(db.usuarios).map(([id, u]) => ({ id, ...clone(u) })))); },
+    async saveUsuario(email, patch) { const e = email.toLowerCase(); db.usuarios[e] = { ...(db.usuarios[e] || {}), email: e, ...clone(patch), atualizadoEm: now() }; save(); },
+    async deleteUsuario(email) { delete db.usuarios[email.toLowerCase()]; save(); },
     watchAnalise(id, cb) { return sub(() => cb(db.analises[id] ? { id, ...clone(db.analises[id]) } : null)); },
     async createAnalise(data) {
       const id = uid();
@@ -1248,8 +1324,9 @@ function localStore() {
       save(); return id;
     },
     async updateHeader(id, patch, texto) { Object.assign(db.analises[id], patch, { atualizadoPor: user()?.nome, atualizadoEm: now() }); log(id, { tipo: "cabecalho", texto }); save(); },
-    async updateItem(id, key, campo, valor, texto) {
-      const a = db.analises[id]; a.itens[key] = { ...a.itens[key], [campo]: valor, por: user()?.nome, em: now() };
+    async updateItem(id, key, campo, valor, texto, ext = {}) {
+      const a = db.analises[id]; a.itens[key] = { ...a.itens[key], [campo]: valor, por: user()?.nome, em: now(), ...clone(ext.item || {}) };
+      Object.assign(a, clone(ext.doc || {}));
       a.atualizadoPor = user()?.nome; a.atualizadoEm = now(); log(id, { tipo: "item", item: key, texto }); save();
     },
     async updateItens(id, patches, texto) {
@@ -1263,8 +1340,8 @@ function localStore() {
       save();
     },
     watchImagens(aid, cb) { return sub(() => cb(Object.entries(db.imagens).filter(([, v]) => v.analiseId === aid).map(([id, v]) => ({ id, ...v })))); },
-    async addImagem(aid, item, dataUrl, nome) { db.imagens[uid()] = { analiseId: aid, item, dataUrl, nome, autor: user()?.nome, em: now() }; log(aid, { tipo: "imagem", item, texto: `Imagem adicionada ao item ${item.slice(1).replaceAll("_", ".")}` }); save(); },
-    async deleteImagem(aid, imgId, item) { delete db.imagens[imgId]; log(aid, { tipo: "imagem", item, texto: `Imagem removida do item ${item.slice(1).replaceAll("_", ".")}` }); save(); },
+    async addImagem(aid, item, dataUrl, nome, extra = {}, prefixo = "") { db.imagens[uid()] = { analiseId: aid, item, dataUrl, nome, autor: user()?.nome, email: db.user.email.toLowerCase(), em: now(), ...extra }; log(aid, { tipo: "imagem", item, texto: `${prefixo}Imagem adicionada ao item ${item.slice(1).replaceAll("_", ".")}` }); save(); },
+    async deleteImagem(aid, imgId, item, prefixo = "") { delete db.imagens[imgId]; log(aid, { tipo: "imagem", item, texto: `${prefixo}Imagem removida do item ${item.slice(1).replaceAll("_", ".")}` }); save(); },
     watchHistorico(aid, cb) { return sub(() => cb(clone(db.historico[aid] || []))); },
     async exportAll() {
       return { versao: 1, exportadoEm: now(), exportadoPor: user()?.nome, segmentos: db.segmentos || SEGMENTOS_PADRAO, construtoras: db.construtoras || null,
@@ -1350,7 +1427,30 @@ function novosItens() {
 // ---------------------------------------------------------------------
 //  Estado
 // ---------------------------------------------------------------------
-const S = { user: null, segmentos: [], construtoras: normConst(), analises: [], unsub: [], ck: null, focusKey: null, ckFiltro: "todos", pend: 0, charts: {} };
+const S = { user: null, perfil: { tipo: "visualizador" }, perfilDoc: null, usuarios: [], segmentosTodos: [], segmentos: [], construtoras: normConst(), analises: [], unsub: [], ck: null, focusKey: null, ckFiltro: "todos", pend: 0, charts: {} };
+
+// ---------------------------------------------------------------------
+//  Perfis de acesso: admin (completo) • elaborador (sua empresa, só elaboração) • visualizador (só dashboard)
+// ---------------------------------------------------------------------
+const isAdm = () => S.perfil.tipo === "admin";
+const isElab = () => S.perfil.tipo === "elaborador";
+const isVis = () => S.perfil.tipo === "visualizador";
+function calcPerfil(doc) {
+  const e = (S.user?.email || "").toLowerCase();
+  if (ADMINS.map(x => x.toLowerCase()).includes(e)) return { tipo: "admin" };
+  const t = PERFIS[doc?.perfil] ? doc.perfil : "visualizador";
+  return t === "elaborador" ? { tipo: t, empresa: doc.empresa || "", segmentos: doc.segmentos || [] } : { tipo: t };
+}
+const segsDaEmpresa = (emp, segs = S.segmentosTodos, cons = S.construtoras) => segs.filter(s => (CONSTRUTORA_POR_SEGMENTO[s.codigo] || cons[s.pacotes[0]]) === emp).map(s => s.codigo);
+const NOME_CAMPO = { elab: "Status elaboração", obs: "Observação", imagem: "Imagem" };
+function aplicarPerfil() {
+  const p = calcPerfil(S.perfilDoc), sig = JSON.stringify(p);
+  S.perfil = p; document.body.dataset.perfil = p.tipo;
+  $("userRole").innerHTML = `<span class="role-badge role-${p.tipo}">${PERFIS[p.tipo].nome}</span>${p.empresa ? " " + empChip(p.empresa) : ""}`;
+  document.querySelectorAll('[data-nav="segmentos"]').forEach(a => a.style.display = isVis() ? "none" : "");
+  document.querySelectorAll('[data-nav="config"]').forEach(a => a.style.display = isAdm() ? "" : "none");
+  if (sig !== S.perfilSig) { S.perfilSig = sig; stopChecklist(); startData(); }
+}
 
 function porSegmento(cod) {
   const l = S.analises.filter(a => a.segmento === cod).sort((x, y) => (x.criadoEm || "").localeCompare(y.criadoEm || ""));
@@ -1398,11 +1498,13 @@ Chart.defaults.font.family = '"Segoe UI",Arial,sans-serif';
   }
   store.onAuth(u => {
     S.user = u;
-    if (!u) { stopAll(); $("appView").style.display = "none"; $("loginView").style.display = "grid"; return; }
+    if (!u) { stopAll(); S.unsubPerfil?.(); S.unsubPerfil = null; S.perfilSig = null; $("appView").style.display = "none"; $("loginView").style.display = "grid"; return; }
     $("loginView").style.display = "none"; $("appView").style.display = "flex";
     $("userName").textContent = u.nome; $("userEmail").textContent = u.email;
     if (!u.temNome) pedirNome();
-    startData();
+    S.unsubPerfil?.();
+    S.unsubPerfil = store.watchPerfil(doc => { S.perfilDoc = doc; aplicarPerfil(); });
+    store.registrarAcesso();
   });
 })();
 
@@ -1432,15 +1534,20 @@ function pedirNome(forcar) {
   $("mNome").focus();
   $("mOk").onclick = async () => {
     const n = $("mNome").value.trim(); if (!n) return;
-    await store.setNome(n); S.user = store.user(); $("userName").textContent = S.user.nome; closeModal();
+    await store.setNome(n); S.user = store.user(); $("userName").textContent = S.user.nome; closeModal(); store.registrarAcesso();
   };
 }
 
 function stopAll() { S.unsub.forEach(f => f && f()); S.unsub = []; stopChecklist(); }
 function startData() {
   stopAll(); syncBadge();
-  S.unsub.push(store.watchSegmentos((l, c) => { S.segmentos = normSegs(l); S.construtoras = normConst(c); setupFilters(); route(true); }));
-  S.unsub.push(store.watchAnalises(l => { S.analises = l; route(true); }));
+  S.unsub.push(store.watchSegmentos((l, c) => {
+    S.construtoras = normConst(c); S.segmentosTodos = normSegs(l);
+    S.segmentos = isElab() ? S.segmentosTodos.filter(s => S.perfil.segmentos.includes(s.codigo)) : S.segmentosTodos;
+    setupFilters(); route(true); drawUsuarios();
+  }));
+  S.unsub.push(store.watchAnalises(l => { S.analises = l; route(true); }, isElab() ? S.perfil.segmentos : undefined));
+  if (isAdm()) S.unsub.push(store.watchUsuarios(l => { S.usuarios = l; drawUsuarios(); }));
   route();
 }
 
@@ -1453,7 +1560,9 @@ function route(dataUpdate) {
   const h = location.hash.replace(/^#\/?/, "") || "dashboard";
   const [r, arg] = h.split("/");
   const views = ["dashboard", "segmentos", "checklist", "config"];
-  const v = views.includes(r) ? r : "dashboard";
+  let v = views.includes(r) ? r : "dashboard";
+  if (isVis() && v !== "dashboard") v = "dashboard";        // visualizador: só dashboard
+  if (!isAdm() && v === "config") v = "dashboard";          // configurações: só administrador
   views.forEach(x => $("view-" + x).style.display = x === v ? "block" : "none");
   document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === (v === "checklist" ? "segmentos" : v)));
   $("filtersSection").style.display = v === "dashboard" ? "" : "none";
@@ -1646,13 +1755,14 @@ function renderSegmentos() {
       const a = vigente(s.codigo), n = porSegmento(s.codigo).length;
       const c = a ? calc(a) : { elab: 0, anal: 0, counts: {} };
       const pill = !a ? '<span class="status-pill st-none">Sem análise</span>' : `<span class="status-pill ${stClass(c.anal)}">${statusDoc(a)}</span>`;
+      const nAlt = a ? Object.values(a.itens || {}).filter(i => i.alt).length : 0;
       html += `<div class="seg-card" data-seg="${esc(s.codigo)}" style="border-top-color:${corEmp(constSeg(s))}">
         <div class="top"><div class="code">${esc(s.codigo)}</div>${pill}</div>
-        <div class="meta">${a ? `<b>Análise Nº ${numDe(a)}</b>${n > 1 ? ` (${n} análises)` : ""} · ${esc(a.documento || "Documento não informado")} · ${revTxt(a)}<br>Atualizado ${fmtDT(a.atualizadoEm)} por ${esc(a.atualizadoPor || "—")}` : "Clique para iniciar a análise"}</div>
+        <div class="meta">${a ? `<b>Análise Nº ${numDe(a)}</b>${n > 1 ? ` (${n} análises)` : ""} · ${esc(a.documento || "Documento não informado")} · ${revTxt(a)}<br>Atualizado ${fmtDT(a.atualizadoEm)} por ${esc(a.atualizadoPor || "—")}` : isAdm() ? "Clique para iniciar a análise" : "Aguardando a primeira análise"}</div>
         <div class="bars">
           <div><span>Análise</span><div class="progress"><span style="width:${pct(c.anal)}%"></span></div><b>${fmt(c.anal).replace(",0%", "%")}</b></div>
           <div><span>Elaboração</span><div class="progress elab"><span style="width:${pct(c.elab)}%"></span></div><b>${fmt(c.elab).replace(",0%", "%")}</b></div>
-        </div>${c.counts["Reprovado"] ? `<div style="margin-top:8px;font-size:11px;color:var(--red);font-weight:700">${c.counts["Reprovado"]} item(ns) reprovado(s)</div>` : ""}
+        </div>${c.counts["Reprovado"] ? `<div style="margin-top:8px;font-size:11px;color:var(--red);font-weight:700">${c.counts["Reprovado"]} item(ns) reprovado(s)</div>` : ""}${nAlt ? `<div class="alt-count">✎ ${nAlt} item(ns) alterado(s) pelo elaborador</div>` : ""}
       </div>`;
     });
     html += "</div></div>";
@@ -1665,9 +1775,11 @@ function renderSegmentos() {
 }
 
 function abrirSegmento(cod) {
+  if (isVis()) return;
   const a = vigente(cod);
   if (a) location.hash = "#/checklist/" + encodeURIComponent(a.id);
-  else novaAnalise(cod);
+  else if (isAdm()) novaAnalise(cod);
+  else toast(`O segmento ${cod} ainda não tem análise iniciada.`);
 }
 
 function novaAnalise(cod, base) {
@@ -1754,7 +1866,7 @@ function buildChecklist(a) {
   </div>
   <div class="ck-tools">
     <div class="seg" id="ckFiltro">
-      <button data-f="todos">Todos</button><button data-f="pend">Aguardando</button><button data-f="rep">Reprovados</button><button data-f="obs">Com observação</button>
+      <button data-f="todos">Todos</button><button data-f="pend">Aguardando</button><button data-f="rep">Reprovados</button><button data-f="obs">Com observação</button><button data-f="alt">Alterados pelo elaborador <span id="ckAltN"></span></button>
     </div>
     <button class="btn btn-light btn-sm" id="ckExp">Expandir tudo</button>
     <button class="btn btn-light btn-sm" id="ckCol">Recolher tudo</button>
@@ -1798,6 +1910,18 @@ function buildChecklist(a) {
   });
   $("checklistRoot").innerHTML = h;
   const root = $("checklistRoot");
+  if (!isAdm()) { // elaborador: só a coluna de elaboração, observações e imagens
+    ["ckNovaRev", "ckDel"].forEach(id => $(id).style.display = "none");
+    root.querySelectorAll(".sec-bulk").forEach(x => x.style.display = "none");
+    root.querySelectorAll("[data-h]").forEach(x => x.disabled = true);
+    root.querySelectorAll('.item select[data-c="resp"], .item select[data-c="anal"]').forEach(x => x.disabled = true);
+    if (isVis()) root.querySelectorAll(".item select").forEach(x => x.disabled = true);
+  }
+  root.addEventListener("click", e => {
+    const b = e.target.closest("[data-ciente]"); if (!b || !isAdm()) return;
+    e.stopPropagation(); const k = b.dataset.ciente;
+    W(() => store.updateItem(S.ck.id, k, "alt", null, `Item ${unkey(k)}: alteração do elaborador conferida (ciente)`));
+  });
 
   // Cabeçalho
   root.querySelectorAll("[data-h]").forEach(inp => inp.onchange = () => {
@@ -1810,16 +1934,17 @@ function buildChecklist(a) {
     const k = s.dataset.k, c = s.dataset.c, ant = S.ck.a.itens?.[k]?.[c] || "";
     s.className = selClass(s.value);
     const nome = { resp: "Responsável", elab: "Status Elaboração", anal: "Status Análise" }[c];
-    W(() => store.updateItem(S.ck.id, k, c, s.value, `Item ${unkey(k)}: ${nome} "${ant}" → "${s.value}"`));
+    if (!isAdm() && c !== "elab") return;
+    salvarItem(k, c, s.value, `Item ${unkey(k)}: ${nome} "${ant}" → "${s.value}"`);
   });
   root.querySelectorAll(".obs-ed").forEach(ed => {
     const salvar = () => {
       clearTimeout(ed._d);
       const k = ed.dataset.k;
-      if (bloqueado(k)) return;
+      if (bloqueado(k) || isVis()) return;
       const val = textoPuro(ed.innerHTML).trim() ? sanitizar(ed.innerHTML) : "";
       if (val === obsHtml(S.ck.a.itens?.[k]?.obs || "")) return;
-      W(() => store.updateItem(S.ck.id, k, "obs", val, `Item ${unkey(k)}: observação alterada`));
+      salvarItem(k, "obs", val, `Item ${unkey(k)}: observação alterada${isElab() ? ` — "${textoPuro(val).slice(0, 300)}"` : ""}`);
     };
     ed.oninput = () => { clearTimeout(ed._d); ed._d = setTimeout(salvar, 1500); };
     ed.onblur = salvar;
@@ -1864,6 +1989,16 @@ function buildChecklist(a) {
   $("ckDel").onclick = excluirAnalise;
   renderRevTabs();
 }
+// Grava um campo do item; alterações do elaborador ficam marcadas (alt) até o administrador dar "Ciente"
+function marcaAlt(k, campo) {
+  const prev = S.ck.a.itens?.[k]?.alt;
+  return { por: S.user.nome, email: S.user.email.toLowerCase(), empresa: S.perfil.empresa || "", em: new Date().toISOString(), campos: uniq([...(prev?.campos || []), campo]) };
+}
+const prefElab = () => isElab() ? `[Elaborador${S.perfil.empresa ? " " + S.perfil.empresa : ""}] ` : "";
+function salvarItem(k, campo, valor, texto) {
+  if (isElab()) return W(() => store.updateItem(S.ck.id, k, campo, valor, prefElab() + texto, { item: { alt: marcaAlt(k, campo) }, doc: { ultimoItem: k } }));
+  return W(() => store.updateItem(S.ck.id, k, campo, valor, texto));
+}
 const CORES_TXT = [["#243447", "Preto"], ["#dc2626", "Vermelho"], ["#ea7a00", "Laranja"], ["#16a34a", "Verde"], ["#2563eb", "Azul"], ["#7c3aed", "Roxo"]];
 const TRAVA = new Set(["Aprovado", "Não se Aplica"]);
 const bloqueado = k => TRAVA.has(S.ck?.a?.itens?.[k]?.anal);
@@ -1907,7 +2042,7 @@ function updateChecklist(a) {
   root.querySelectorAll(".obs-ed").forEach(ed => {
     const k = ed.dataset.k, html = obsHtml(a.itens?.[k]?.obs || ""), lock = TRAVA.has(a.itens?.[k]?.anal);
     if (ed !== act && ed.innerHTML !== html) ed.innerHTML = html;
-    ed.contentEditable = lock ? "false" : "true";
+    ed.contentEditable = lock || isVis() ? "false" : "true";
     ed.closest(".item").classList.toggle("locked", lock);
     ed.closest(".item").classList.toggle("locked-na", a.itens?.[k]?.anal === "Não se Aplica");
     ed.closest(".obs-wrap").querySelector(".obs-lock").textContent = `🔒 Item ${a.itens?.[k]?.anal === "Não se Aplica" ? "não se aplica" : "aprovado"} — observações e imagens bloqueadas`;
@@ -1918,7 +2053,15 @@ function updateChecklist(a) {
     if (el !== act && el.value !== v) el.value = v;
     el.className = selClass(el.value);
   });
-  root.querySelectorAll("[data-who]").forEach(w => { const it = a.itens?.[w.dataset.who]; w.textContent = it?.por ? `Alterado por ${it.por} em ${fmtDT(it.em)}` : ""; });
+  root.querySelectorAll("[data-who]").forEach(w => {
+    const k = w.dataset.who, it = a.itens?.[k], al = it?.alt;
+    let h = it?.por ? `Alterado por ${esc(it.por)} em ${fmtDT(it.em)}` : "";
+    if (al) h += `<div class="alt-badge">✎ Alterado pelo elaborador <b>${esc(al.por)}</b>${al.empresa ? ` (${esc(al.empresa)})` : ""} em ${fmtDT(al.em)} — ${esc((al.campos || []).map(c => NOME_CAMPO[c] || c).join(", "))}${isAdm() ? ` <button type="button" class="ciente" data-ciente="${k}" title="Marcar como conferido">✓ Ciente</button>` : ""}</div>`;
+    w.innerHTML = h;
+    w.closest(".item").classList.toggle("alt-elab", !!al);
+  });
+  const nAlt = Object.values(a.itens || {}).filter(i => i.alt).length;
+  $("ckAltN").textContent = nAlt ? `(${nAlt})` : "";
   const c = calc(a);
   $("ckElab").textContent = fmt(c.elab); $("ckElabBar").style.width = pct(c.elab) + "%";
   $("ckAnal").textContent = fmt(c.anal); $("ckAnalBar").style.width = pct(c.anal) + "%";
@@ -1940,7 +2083,7 @@ function applyFiltro() {
   $("ckFiltro").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.f === f));
   document.querySelectorAll("#checklistRoot .item").forEach(row => {
     const it = a.itens?.[row.dataset.item] || {};
-    const show = f === "todos" || (f === "pend" && (it.anal || "Aguardando Conclusão") === "Aguardando Conclusão") || (f === "rep" && it.anal === "Reprovado") || (f === "obs" && textoPuro(it.obs).trim());
+    const show = f === "todos" || (f === "pend" && (it.anal || "Aguardando Conclusão") === "Aguardando Conclusão") || (f === "rep" && it.anal === "Reprovado") || (f === "obs" && textoPuro(it.obs).trim()) || (f === "alt" && it.alt);
     row.style.display = show ? "" : "none";
   });
   document.querySelectorAll("#checklistRoot .sec").forEach(sec => {
@@ -1963,13 +2106,13 @@ function renderImgs() {
   const by = {}; S.ck.imgs.sort((a, b) => (a.em || "").localeCompare(b.em || "")).forEach(i => (by[i.item] ||= []).push(i));
   document.querySelectorAll("#checklistRoot [data-imgs]").forEach(box => {
     const k = box.dataset.imgs;
-    const lock = bloqueado(k);
-    box.innerHTML = (by[k] || []).map(i => `<div class="thumb" data-img="${i.id}" title="${esc(i.autor || "")} — ${fmtDT(i.em)}"><img src="${i.dataUrl}" alt="">${lock ? "" : `<button class="x" data-del="${i.id}" title="Remover">✕</button>`}</div>`).join("")
+    const lock = bloqueado(k) || isVis();
+    box.innerHTML = (by[k] || []).map(i => `<div class="thumb${i.perfil === "elaborador" ? " thumb-elab" : ""}" data-img="${i.id}" title="${i.perfil === "elaborador" ? "Enviada pelo elaborador: " : ""}${esc(i.autor || "")}${i.empresa ? " (" + esc(i.empresa) + ")" : ""} — ${fmtDT(i.em)}"><img src="${i.dataUrl}" alt="">${lock || !podeApagarImg(i) ? "" : `<button class="x" data-del="${i.id}" title="Remover">✕</button>`}</div>`).join("")
       + (lock ? "" : `<button class="add-img" data-add="${k}" title="Adicionar imagem (ou Ctrl+V)">＋<br>imagem</button>`);
   });
   document.querySelectorAll("#checklistRoot .thumb").forEach(t => t.onclick = e => {
     const img = S.ck.imgs.find(i => i.id === t.dataset.img);
-    if (e.target.dataset.del) { e.stopPropagation(); if (bloqueado(img.item)) return; if (confirm("Remover esta imagem?")) W(() => store.deleteImagem(S.ck.id, img.id, img.item)); return; }
+    if (e.target.dataset.del) { e.stopPropagation(); if (bloqueado(img.item) || !podeApagarImg(img)) return; if (confirm("Remover esta imagem?")) W(() => store.deleteImagem(S.ck.id, img.id, img.item, prefElab())); return; }
     $("lightboxImg").src = img.dataUrl; $("lightboxCap").textContent = `Item ${unkey(img.item)} · ${img.autor || ""} · ${fmtDT(img.em)}`; $("lightbox").style.display = "grid";
   });
   document.querySelectorAll("#checklistRoot [data-add]").forEach(b => b.onclick = e => {
@@ -1987,11 +2130,16 @@ document.addEventListener("paste", e => {
     e.preventDefault(); document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
   }
 });
+const podeApagarImg = i => isAdm() || (isElab() && (i.email || "") === S.user.email.toLowerCase());
 async function addImg(k, file) {
+  if (isVis()) return;
   if (bloqueado(k)) { toast(`Item ${unkey(k)} ${motivoTrava(k)} — imagens bloqueadas`); return; }
   try {
     const url = await compress(file);
-    await W(() => store.addImagem(S.ck.id, k, url, file.name || "print"));
+    if (isElab()) {
+      await W(() => store.addImagem(S.ck.id, k, url, file.name || "print", { perfil: "elaborador", empresa: S.perfil.empresa || "" }, prefElab()));
+      await W(() => store.updateItem(S.ck.id, k, "alt", marcaAlt(k, "imagem"), prefElab() + `Item ${unkey(k)}: imagem incluída pelo elaborador`, { doc: { ultimoItem: k } }));
+    } else await W(() => store.addImagem(S.ck.id, k, url, file.name || "print"));
     toast(`Imagem adicionada ao item ${unkey(k)}`);
   } catch (e) { alert("Não foi possível adicionar a imagem: " + e.message); }
 }
@@ -2131,7 +2279,16 @@ $("saveSegBtn").onclick = () => {
   const pacs = uniq(l.flatMap(s => s.pacotes));
   if (pacs.some(p => !cfgConst[p])) { alert("Informe a construtora de todos os pacotes."); return; }
   const cons = Object.fromEntries(pacs.map(p => [p, cfgConst[p]]));
-  W(async () => { await store.saveSegmentos(l, cons); toast("Segmentos e construtoras salvos"); });
+  W(async () => {
+    await store.saveSegmentos(l, cons);
+    // mantém os segmentos dos elaboradores coerentes com a nova configuração
+    const nc = normConst(cons);
+    for (const u of S.usuarios.filter(u => u.perfil === "elaborador" && u.empresa)) {
+      const sg = segsDaEmpresa(u.empresa, l, nc);
+      if (JSON.stringify(sg) !== JSON.stringify(u.segmentos || [])) await store.saveUsuario(u.id, { segmentos: sg });
+    }
+    toast("Segmentos e construtoras salvos");
+  });
 };
 $("exportJsonBtn").onclick = () => W(async () => {
   const data = await store.exportAll();
@@ -2154,6 +2311,45 @@ $("importFile").onchange = async e => {
     if (!confirm(`Restaurar backup de ${fmtDT(data.exportadoEm)}?\n${data.analises.length} análises e ${(data.imagens || []).length} imagens serão gravadas (registros com o mesmo ID serão substituídos).`)) return;
     await W(() => store.importAll(data)); toast("Backup restaurado");
   } catch (err) { alert("Falha ao restaurar: " + err.message); }
+};
+
+// ---------------------------------------------------------------------
+//  USUÁRIOS E ACESSOS (somente administrador)
+// ---------------------------------------------------------------------
+const empresasLista = () => uniq(S.segmentosTodos.map(constSeg));
+function drawUsuarios() {
+  if (!isAdm() || !$("userTable")) return;
+  const fixos = ADMINS.map(e => e.toLowerCase());
+  const l = [...S.usuarios];
+  fixos.forEach(e => { if (!l.some(u => u.id === e)) l.push({ id: e, email: e }); });
+  l.sort((a, b) => (fixos.includes(b.id) - fixos.includes(a.id)) || a.id.localeCompare(b.id));
+  const emps = empresasLista();
+  $("newUserEmp").innerHTML = '<option value="">Empresa…</option>' + emps.map(e => `<option>${esc(e)}</option>`).join("");
+  $("userTable").innerHTML = "<thead><tr><th>E-mail</th><th>Nome</th><th>Perfil</th><th>Empresa</th><th>Segmentos liberados</th><th>Último acesso</th><th></th></tr></thead><tbody>" + l.map(u => {
+    const fixo = fixos.includes(u.id), perf = fixo ? "admin" : (PERFIS[u.perfil] ? u.perfil : "visualizador");
+    return `<tr data-u="${esc(u.id)}"><td><b>${esc(u.id)}</b></td><td>${esc(u.nome || "—")}</td>
+      <td>${fixo ? '<span class="role-badge role-admin">Administrador (principal)</span>' : `<select data-uf="perfil">${Object.entries(PERFIS).map(([k, v]) => `<option value="${k}" ${k === perf ? "selected" : ""}>${v.nome}</option>`).join("")}</select>`}</td>
+      <td>${perf === "elaborador" ? `<select data-uf="empresa"><option value="">Selecione…</option>${emps.map(e => `<option ${e === u.empresa ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>` : '<span class="muted">—</span>'}</td>
+      <td class="muted">${perf === "elaborador" ? (u.segmentos?.length ? esc(u.segmentos.join(", ")) : '<b style="color:var(--red)">nenhum — selecione a empresa</b>') : perf === "admin" ? "todos (completo)" : "todos (só dashboard)"}</td>
+      <td class="muted">${fmtDT(u.ultimoAcesso)}</td>
+      <td>${fixo ? "" : `<button class="btn btn-danger btn-sm" data-udel="${esc(u.id)}" title="Remover perfil (volta a ser visualizador)">✕</button>`}</td></tr>`;
+  }).join("") + "</tbody>";
+  $("userTable").querySelectorAll("select").forEach(sl => sl.onchange = () => {
+    const id = sl.closest("tr").dataset.u, u = S.usuarios.find(x => x.id === id) || {};
+    const perfil = sl.dataset.uf === "perfil" ? sl.value : (u.perfil || "visualizador");
+    const empresa = perfil === "elaborador" ? (sl.dataset.uf === "empresa" ? sl.value : u.empresa || "") : "";
+    W(async () => { await store.saveUsuario(id, { perfil, empresa, segmentos: perfil === "elaborador" && empresa ? segsDaEmpresa(empresa) : [] }); toast(`Acesso de ${id} atualizado`); });
+  });
+  $("userTable").querySelectorAll("[data-udel]").forEach(b => b.onclick = () => {
+    if (confirm(`Remover o perfil de ${b.dataset.udel}? O usuário passa a ser Visualizador (o login continua existindo no Firebase).`)) W(() => store.deleteUsuario(b.dataset.udel));
+  });
+}
+$("newUserPerfil").onchange = () => $("newUserEmp").style.display = $("newUserPerfil").value === "elaborador" ? "" : "none";
+$("addUserBtn").onclick = () => {
+  const email = $("newUserEmail").value.trim().toLowerCase(), perfil = $("newUserPerfil").value, empresa = perfil === "elaborador" ? $("newUserEmp").value : "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { alert("Informe um e-mail válido."); return; }
+  if (perfil === "elaborador" && !empresa) { alert("Selecione a empresa do elaborador."); return; }
+  W(async () => { await store.saveUsuario(email, { perfil, empresa, segmentos: empresa ? segsDaEmpresa(empresa) : [] }); $("newUserEmail").value = ""; toast(`Perfil de ${email} salvo`); });
 };
 
 // ---------------------------------------------------------------------
